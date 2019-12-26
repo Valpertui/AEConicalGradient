@@ -40,35 +40,18 @@ open class ConicalGradientLayer: CALayer {
 
     /// The array of UIColor objects defining the color of each gradient stop.
     /// Defaults to empty array. Animatable.
-    open var colors = [UIColor]() {
-        didSet {
-            setNeedsDisplay()
-        }
-    }
+  @NSManaged open var colors: [UIColor]
 
     /// The array of Double values defining the location of each gradient stop as a value in the range [0,1].
     /// The values must be monotonically increasing.
     /// If empty array is given, the stops are assumed to spread uniformly across the [0,1] range.
     /// Defaults to nil. Animatable.
-    open var locations = [Double]() {
-        didSet {
-            setNeedsDisplay()
-        }
-    }
+  @NSManaged open var locations: [Double]
 
     /// Start angle in radians. Defaults to 0.0.
-    open var startAngle: Double = 0.0 {
-        didSet {
-            setNeedsDisplay()
-        }
-    }
-
-    /// End angle in radians. Defaults to 2 * M_PI.
-    open var endAngle: Double = Constants.MaxAngle {
-        didSet {
-            setNeedsDisplay()
-        }
-    }
+  @NSManaged open var startAngle: Double
+  
+  @NSManaged open var angleSize: Double
 
     private var transitions = [Transition]()
     
@@ -84,73 +67,89 @@ open class ConicalGradientLayer: CALayer {
     // MARK: Helpers
 
     private func draw(in rect: CGRect) {
-        loadTransitions()
-
-        let center = CGPoint(x: rect.midX, y: rect.midY)
-        let longerSide = max(rect.width, rect.height)
-        let radius = Double(longerSide) * 2.squareRoot()
-        let step = (.pi / 2) / radius
-        var angle = startAngle
-
-        while angle <= endAngle {
-            let pointX = radius * cos(angle) + Double(center.x)
-            let pointY = radius * sin(angle) + Double(center.y)
+      loadTransitions()
+      
+      let center = CGPoint(x: rect.midX, y: rect.midY)
+      let longerSide = max(rect.width, rect.height)
+      let radius = Double(longerSide) * 2.squareRoot()
+      let step = (.pi / 2) / radius
+      let startAngle = self.startAngle.truncatingRemainder(dividingBy: Constants.MaxAngle)
+      var currentAngle = startAngle
+      let angleSize = self.angleSize.truncatingRemainder(dividingBy: Constants.MaxAngle)
+      while currentAngle <= (startAngle + angleSize) {
+        let pointX = radius * cos(currentAngle) + Double(center.x)
+            let pointY = radius * sin(currentAngle) + Double(center.y)
             let startPoint = CGPoint(x: pointX, y: pointY)
 
             let line = UIBezierPath()
             line.move(to: startPoint)
             line.addLine(to: center)
 
-            color(forAngle: angle).setStroke()
+        color(forAngle: currentAngle - startAngle, angleSize: angleSize).setStroke()
             line.stroke()
 
-            angle += step
+            currentAngle += step
         }
     }
+  
+  private func color(forAngle angle: Double, angleSize: Double) -> UIColor {
+    let percent = angle.convert(fromZeroToMax: angleSize, toZeroToMax: 1.0).truncatingRemainder(dividingBy: 1.0)
+    guard let transition = transition(forPercent: percent) else {
+      return spectrumColor(forAngle: angle, angleSize: angleSize)
+    }
+    
+    return transition.color(forPercent: percent)
+  }
 
-    private func color(forAngle angle: Double) -> UIColor {
-        let percent = angle.convert(fromZeroToMax: Constants.MaxAngle, toZeroToMax: 1.0)
+  private func spectrumColor(forAngle angle: Double, angleSize: Double) -> UIColor {
+    let hue = angle.convert(fromZeroToMax: angleSize, toZeroToMax: Constants.MaxHue)
+    return UIColor(hue: CGFloat(hue / Constants.MaxHue), saturation: 1.0, brightness: 1.0, alpha: 1.0)
+  }
 
-        guard let transition = transition(forPercent: percent) else {
-            return spectrumColor(forAngle: angle)
+  override open class func needsDisplay(forKey key: String) -> Bool {
+    if isAnimatableProperty(key) {
+      return true
+    } else {
+      return super.needsDisplay(forKey: key)
+    }
+  }
+  
+  /// the properties which are animatable
+  static let animatableProperties: [String] = ["angleSize", "startAngle", "colors", "locations"]
+
+  // Returns whether or not a given property key is animatable
+  static func isAnimatableProperty(_ key: String) -> Bool {
+      return animatableProperties.firstIndex(of: key) != nil
+  }
+  
+  private func loadTransitions() {
+    transitions.removeAll()
+    
+    if colors.count > 1 {
+      let transitionsCount = colors.count - 1
+      let locationStep = 1.0 / Double(transitionsCount)
+      
+      for i in 0 ..< transitionsCount {
+        let fromLocation, toLocation: Double
+        let fromColor, toColor: UIColor
+        
+        if locations.count == colors.count {
+          fromLocation = locations[i]
+          toLocation = locations[i + 1]
+        } else {
+          fromLocation = locationStep * Double(i)
+          toLocation = locationStep * Double(i + 1)
         }
-
-        return transition.color(forPercent: percent)
+        
+        fromColor = colors[i]
+        toColor = colors[i + 1]
+        
+        let transition = Transition(fromLocation: fromLocation, toLocation: toLocation,
+                                    fromColor: fromColor, toColor: toColor)
+        transitions.append(transition)
+      }
     }
-
-    private func spectrumColor(forAngle angle: Double) -> UIColor {
-        let hue = angle.convert(fromZeroToMax: Constants.MaxAngle, toZeroToMax: Constants.MaxHue)
-        return UIColor(hue: CGFloat(hue / Constants.MaxHue), saturation: 1.0, brightness: 1.0, alpha: 1.0)
-    }
-
-    private func loadTransitions() {
-        transitions.removeAll()
-
-        if colors.count > 1 {
-            let transitionsCount = colors.count - 1
-            let locationStep = 1.0 / Double(transitionsCount)
-
-            for i in 0 ..< transitionsCount {
-                let fromLocation, toLocation: Double
-                let fromColor, toColor: UIColor
-
-                if locations.count == colors.count {
-                    fromLocation = locations[i]
-                    toLocation = locations[i + 1]
-                } else {
-                    fromLocation = locationStep * Double(i)
-                    toLocation = locationStep * Double(i + 1)
-                }
-
-                fromColor = colors[i]
-                toColor = colors[i + 1]
-
-                let transition = Transition(fromLocation: fromLocation, toLocation: toLocation,
-                                            fromColor: fromColor, toColor: toColor)
-                transitions.append(transition)
-            }
-        }
-    }
+  }
 
     private func transition(forPercent percent: Double) -> Transition? {
         let filtered = transitions.filter { percent >= $0.fromLocation && percent < $0.toLocation }
